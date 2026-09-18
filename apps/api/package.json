@@ -4,5 +4,10 @@
   "version": "0.1.0",
   "dependencies": {
     "@payswitch/core": "workspace:*"
+  },
+  "scripts": {
+    "lint": "echo 'api: no sources at this stage' && exit 0",
+    "test": "echo 'api: no tests at this stage' && exit 0",
+    "test:e2e": "echo 'api: no e2e at this stage' && exit 0"
   }
 }

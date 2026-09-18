@@ -2,5 +2,10 @@
   "name": "@payswitch/core",
   "version": "0.1.0",
   "main": "./src/index.ts",
-  "types": "./src/index.ts"
+  "types": "./src/index.ts",
+  "scripts": {
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test",
+    "test:e2e": "echo 'core: no e2e at this stage' && exit 0"
+  }
 }
