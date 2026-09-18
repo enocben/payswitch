@@ -1,0 +1,14 @@
+{
+  "name": "payswitch",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "bun@1.3.14",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "bun run --filter './apps/*' dev",
+    "build": "bun run --filter './apps/*' build",
+    "lint": "bun run --filter './apps/*' lint",
+    "test": "bun run --filter './...' test",
+    "test:e2e": "bun run --filter './...' test:e2e"
+  }
+}
