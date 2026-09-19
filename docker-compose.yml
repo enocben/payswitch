@@ -1,21 +1,39 @@
+# Payswitch — infra locale v1 (spec §14) : PostgreSQL 16 + Redis 7.
+# Bouclé sur loopback UNIQUEMENT (UFW: seuls 2222/80/443 ouverts) —
+# aucun port exposé sur une interface publique.
+# Identifiants = placeholders de dev local, jamais de vrais secrets
+# (vrais secrets uniquement via variables d'environnement, cf. .env.example).
 services:
   postgres:
     image: postgres:16
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-payswitch}
+      POSTGRES_USER: ${POSTGRES_USER:-payswitch}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-payswitch}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-payswitch} -d $${POSTGRES_DB:-payswitch}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   redis:
     image: redis:7
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
 volumes:
   pgdata:
+  redisdata:
