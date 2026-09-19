@@ -4,5 +4,12 @@
   "version": "0.1.0",
   "dependencies": {
     "@payswitch/core": "workspace:*"
+  },
+  "scripts": {
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test",
+    "test:e2e": "echo 'api: e2e (REST) arrives with the webhooks/REST wave — see integration tests in `bun test`' && exit 0",
+    "db:migrate": "bun src/infrastructure/database/migrate.ts",
+    "db:seed": "bun src/infrastructure/database/seed.ts"
   }
 }

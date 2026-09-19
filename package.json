@@ -7,8 +7,13 @@
   "scripts": {
     "dev": "bun run --filter './apps/*' dev",
     "build": "bun run --filter './apps/*' build",
-    "lint": "bun run --filter './apps/*' lint",
-    "test": "bun run --filter './...' test",
-    "test:e2e": "bun run --filter './...' test:e2e"
+    "lint": "bun run --filter '*' lint",
+    "test": "bun run --filter '*' test",
+    "test:e2e": "bun run --filter '*' test:e2e"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.1",
+    "bun-types": "^1.4.2",
+    "typescript": "^7.0.2"
   }
 }
