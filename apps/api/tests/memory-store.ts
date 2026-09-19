@@ -218,8 +218,12 @@ export class MemoryStore implements EngineStore {
 
   async geoOf(payment: PaymentRow): Promise<{ country: string; network: string }> {
     const geo = this.geo.get(payment.id);
-    if (!geo) throw new Error("Country/network reference broken");
-    return geo;
+    if (geo) return geo;
+    // Repli : résout via les maps pays/réseaux (miroir du JOIN PG).
+    const country = this.countries.get(payment.country_id);
+    const network = [...this.networks.values()].find((n) => n.id === payment.network_id);
+    if (!country || !network) throw new Error("Country/network reference broken");
+    return { country: country.code, network: network.code };
   }
 
   async replaceRoute(
