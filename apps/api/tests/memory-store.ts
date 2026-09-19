@@ -5,13 +5,16 @@
 import {
   UniqueViolationError,
   type AttemptRow,
+  type AuditLogRow,
   type CountryRow,
+  type MerchantEventType,
   type NetworkRow,
   type NewPayment,
   type PaymentRow,
   type PaymentStore,
   type ProviderRow,
   type RouteEntry,
+  type WebhookDeliveryRow,
   type WebhookRow,
 } from "../src/engine/store.js";
 import type { EngineStore } from "../src/engine/payment-engine.js";
@@ -29,6 +32,9 @@ export class MemoryStore implements EngineStore {
   attempts = new Map<string, AttemptRow[]>(); // paymentId
   webhooks = new Map<string, WebhookRow>(); // `${providerId}:${eventId}`
   geo = new Map<string, { country: string; network: string }>(); // paymentId
+  audits: AuditLogRow[] = [];
+  deliveries = new Map<string, WebhookDeliveryRow>(); // id
+  deliveriesByEvent = new Map<string, WebhookDeliveryRow>(); // event_id
   private queue: Promise<unknown> = Promise.resolve();
 
   async withTransaction<T>(fn: (tx: PaymentStore) => Promise<T>): Promise<T> {
@@ -214,6 +220,113 @@ export class MemoryStore implements EngineStore {
     const geo = this.geo.get(payment.id);
     if (!geo) throw new Error("Country/network reference broken");
     return geo;
+  }
+
+  async replaceRoute(
+    countryId: string,
+    networkId: string,
+    entries: { provider_id: string; priority: number }[],
+  ): Promise<void> {
+    const key = `${countryId}:${networkId}`;
+    const prios = entries.map((e) => e.priority);
+    if (new Set(prios).size !== prios.length) {
+      throw new UniqueViolationError("uq_routing_priority");
+    }
+    const ids = entries.map((e) => e.provider_id);
+    if (new Set(ids).size !== ids.length) {
+      throw new UniqueViolationError("uq_routing_triplet");
+    }
+    this.routes.set(
+      key,
+      entries.map((e) => ({
+        provider_id: e.provider_id,
+        provider_code: this.providersById.get(e.provider_id)?.code ?? e.provider_id,
+        priority: e.priority,
+      })),
+    );
+  }
+
+  async insertAuditLog(a: {
+    id: string;
+    action: string;
+    actor: string;
+    resource_type: string;
+    resource_id?: string | null;
+    old_value?: unknown;
+    new_value?: unknown;
+    ip?: string | null;
+    request_id?: string | null;
+  }): Promise<AuditLogRow> {
+    const row: AuditLogRow = {
+      id: a.id,
+      action: a.action,
+      actor: a.actor,
+      resource_type: a.resource_type,
+      resource_id: a.resource_id ?? null,
+      old_value: a.old_value ?? null,
+      new_value: a.new_value ?? null,
+      ip: a.ip ?? null,
+      request_id: a.request_id ?? null,
+      created_at: nowISO(),
+    };
+    this.audits.push(row);
+    return { ...row };
+  }
+
+  async insertWebhookDelivery(d: {
+    id: string;
+    event_id: string;
+    payment_id: string;
+    attempt_id?: string | null;
+    url: string;
+    event_type: MerchantEventType;
+    payload: Record<string, unknown>;
+    signature: string;
+    next_retry_at: string | null;
+  }): Promise<WebhookDeliveryRow> {
+    if (this.deliveriesByEvent.has(d.event_id)) {
+      throw new UniqueViolationError("uq_delivery_event_id");
+    }
+    const row: WebhookDeliveryRow = {
+      id: d.id,
+      event_id: d.event_id,
+      payment_id: d.payment_id,
+      attempt_id: d.attempt_id ?? null,
+      url: d.url,
+      event_type: d.event_type,
+      payload: d.payload,
+      signature: d.signature,
+      status: "pending",
+      attempts: 0,
+      next_retry_at: d.next_retry_at,
+      last_response_code: null,
+      last_response_body: null,
+      created_at: nowISO(),
+      updated_at: nowISO(),
+    };
+    this.deliveries.set(row.id, row);
+    this.deliveriesByEvent.set(row.event_id, row);
+    return { ...row };
+  }
+
+  async listDueWebhookDeliveries(now: string, limit: number): Promise<WebhookDeliveryRow[]> {
+    return [...this.deliveries.values()]
+      .filter(
+        (d) =>
+          (d.status === "pending" || d.status === "retrying") &&
+          d.next_retry_at !== null &&
+          d.next_retry_at <= now,
+      )
+      .sort((a, b) => (a.next_retry_at! <= b.next_retry_at! ? -1 : 1))
+      .slice(0, limit)
+      .map((d) => ({ ...d }));
+  }
+
+  async updateWebhookDelivery(id: string, patch: Partial<WebhookDeliveryRow>): Promise<WebhookDeliveryRow> {
+    const row = this.deliveries.get(id);
+    if (!row) throw new Error(`Delivery not found: ${id}`);
+    Object.assign(row, patch, { updated_at: nowISO() });
+    return { ...row };
   }
 }
 

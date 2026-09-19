@@ -9,13 +9,16 @@ import type { AttemptStatus, PaymentStatus } from "@payswitch/core";
 import {
   UniqueViolationError,
   type AttemptRow,
+  type AuditLogRow,
   type CountryRow,
+  type MerchantEventType,
   type NetworkRow,
   type NewPayment,
   type PaymentRow,
   type PaymentStore,
   type ProviderRow,
   type RouteEntry,
+  type WebhookDeliveryRow,
   type WebhookRow,
 } from "../../engine/store.js";
 import type { EngineStore } from "../../engine/payment-engine.js";
@@ -90,6 +93,26 @@ function mapAttempt(r: Record<string, unknown>): AttemptRow {
     error_message: (r.error_message as string | null) ?? null,
     error_outcome: (r.error_outcome as AttemptRow["error_outcome"]) ?? null,
     confirmed: Boolean(r.confirmed),
+    created_at: asISO(r.created_at),
+    updated_at: asISO(r.updated_at),
+  };
+}
+
+function mapDelivery(r: Record<string, unknown>): WebhookDeliveryRow {
+  return {
+    id: String(r.id),
+    event_id: String(r.event_id),
+    payment_id: String(r.payment_id),
+    attempt_id: (r.attempt_id as string | null) ?? null,
+    url: String(r.url),
+    event_type: r.event_type as MerchantEventType,
+    payload: asJSON(r.payload),
+    signature: String(r.signature),
+    status: r.status as WebhookDeliveryRow["status"],
+    attempts: Number(r.attempts),
+    next_retry_at: r.next_retry_at == null ? null : asISO(r.next_retry_at),
+    last_response_code: (r.last_response_code as number | null) ?? null,
+    last_response_body: (r.last_response_body as string | null) ?? null,
     created_at: asISO(r.created_at),
     updated_at: asISO(r.updated_at),
   };
@@ -345,5 +368,112 @@ export class PostgresStore implements EngineStore {
     const r = rows[0] as Record<string, unknown> | undefined;
     if (!r) throw new Error("Country/network reference broken");
     return { country: String(r.country), network: String(r.network) };
+  }
+
+  async replaceRoute(
+    countryId: string,
+    networkId: string,
+    entries: { provider_id: string; priority: number }[],
+  ): Promise<void> {
+    await run(this.sql, async (s) => {
+      void s;
+      await this.sql`DELETE FROM routing_rules WHERE country_id = ${countryId} AND network_id = ${networkId}`;
+      for (const e of entries) {
+        await this.sql`
+          INSERT INTO routing_rules (id, country_id, network_id, provider_id, priority)
+          VALUES (gen_random_uuid(), ${countryId}, ${networkId}, ${e.provider_id}, ${e.priority})`;
+      }
+    });
+  }
+
+  async insertAuditLog(a: {
+    id: string;
+    action: string;
+    actor: string;
+    resource_type: string;
+    resource_id?: string | null;
+    old_value?: unknown;
+    new_value?: unknown;
+    ip?: string | null;
+    request_id?: string | null;
+  }): Promise<AuditLogRow> {
+    return await run(this.sql, async (s) => {
+      void s;
+      const rows = await this.sql`
+        INSERT INTO audit_logs (id, action, actor, resource_type, resource_id,
+          old_value, new_value, ip, request_id)
+        VALUES (${a.id}, ${a.action}, ${a.actor}, ${a.resource_type}, ${a.resource_id ?? null},
+          ${JSON.stringify(a.old_value ?? null)}, ${JSON.stringify(a.new_value ?? null)},
+          ${a.ip ?? null}, ${a.request_id ?? null})
+        RETURNING *`;
+      const r = rows[0] as Record<string, unknown>;
+      return {
+        id: String(r.id),
+        action: String(r.action),
+        actor: String(r.actor),
+        resource_type: String(r.resource_type),
+        resource_id: (r.resource_id as string | null) ?? null,
+        old_value: r.old_value,
+        new_value: r.new_value,
+        ip: (r.ip as string | null) ?? null,
+        request_id: (r.request_id as string | null) ?? null,
+        created_at: asISO(r.created_at),
+      };
+    });
+  }
+
+  async insertWebhookDelivery(d: {
+    id: string;
+    event_id: string;
+    payment_id: string;
+    attempt_id?: string | null;
+    url: string;
+    event_type: MerchantEventType;
+    payload: Record<string, unknown>;
+    signature: string;
+    next_retry_at: string | null;
+  }): Promise<WebhookDeliveryRow> {
+    return await run(this.sql, async (s) => {
+      void s;
+      const rows = await this.sql`
+        INSERT INTO webhook_deliveries (id, event_id, payment_id, attempt_id, url,
+          event_type, payload, signature, next_retry_at)
+        VALUES (${d.id}, ${d.event_id}, ${d.payment_id}, ${d.attempt_id ?? null}, ${d.url},
+          ${d.event_type}, ${JSON.stringify(d.payload)}, ${d.signature}, ${d.next_retry_at})
+        RETURNING *`;
+      return mapDelivery(rows[0] as Record<string, unknown>);
+    });
+  }
+
+  async listDueWebhookDeliveries(now: string, limit: number): Promise<WebhookDeliveryRow[]> {
+    const rows = await this.sql`
+      SELECT * FROM webhook_deliveries
+       WHERE status IN ('pending', 'retrying')
+         AND next_retry_at IS NOT NULL AND next_retry_at <= ${now}
+       ORDER BY next_retry_at ASC LIMIT ${limit}`;
+    return (rows as Record<string, unknown>[]).map((r: Record<string, unknown>) => mapDelivery(r));
+  }
+
+  async updateWebhookDelivery(id: string, patch: Partial<WebhookDeliveryRow>): Promise<WebhookDeliveryRow> {
+    const rows = await this.sql`
+      UPDATE webhook_deliveries SET
+        status = COALESCE(${patch.status ?? null}, status),
+        attempts = COALESCE(${patch.attempts ?? null}, attempts),
+        next_retry_at = COALESCE(${patch.next_retry_at === undefined ? null : patch.next_retry_at}, next_retry_at),
+        last_response_code = COALESCE(${patch.last_response_code ?? null}, last_response_code),
+        last_response_body = COALESCE(${patch.last_response_body ?? null}, last_response_body),
+        updated_at = now()
+      WHERE id = ${id} RETURNING *`;
+    const r = rows[0] as Record<string, unknown> | undefined;
+    if (!r) throw new Error(`Delivery not found: ${id}`);
+    // next_retry_at = NULL explicite (livré/échoué) : COALESCE ci-dessus garde
+    // l'ancienne valeur — on force NULL quand demandé.
+    if (patch.next_retry_at === null && r.next_retry_at !== null) {
+      const cleared = await this.sql`
+        UPDATE webhook_deliveries SET next_retry_at = NULL, updated_at = now()
+        WHERE id = ${id} RETURNING *`;
+      return mapDelivery(cleared[0] as Record<string, unknown>);
+    }
+    return mapDelivery(r);
   }
 }

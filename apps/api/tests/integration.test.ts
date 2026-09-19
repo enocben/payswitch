@@ -54,7 +54,7 @@ d("intégration Postgres (compose local)", () => {
   });
 
   async function clean(): Promise<void> {
-    await sql`TRUNCATE webhook_events, payment_attempts, payments CASCADE`;
+    await sql`TRUNCATE webhook_deliveries, webhook_events, payment_attempts, payments, audit_logs CASCADE`;
   }
 
   function engine(store: PostgresStore, providers: Map<string, PaymentProvider>, expirationHoursRaw = "24") {
@@ -239,5 +239,61 @@ d("intégration Postgres (compose local)", () => {
       provider_raw_request: string | null;
     };
     expect(raw.provider_raw_request).toBeNull();
+  });
+
+  test("migration 002 : deliveries + audit persistés (PG réel)", async () => {
+    await clean();
+    const store = new PostgresStore(sql);
+    const eng = engine(store, registry("success", "success"));
+
+    // Routing reorder via moteur → replaceRoute + audit.
+    const order = await eng.updateRouting({
+      country: "CD",
+      network: "AIRTEL",
+      providers: ["mocksecondary", "mockprimary"],
+      actor: "admin:pg",
+    });
+    expect(order).toEqual(["mocksecondary", "mockprimary"]);
+    const audits = (await sql`SELECT action, resource_id FROM audit_logs`) as {
+      action: string;
+      resource_id: string;
+    }[];
+    expect(audits).toContainEqual({ action: "routing.updated", resource_id: "CD-AIRTEL" });
+
+    // Restore l'ordre seed pour les autres tests.
+    await eng.updateRouting({
+      country: "CD",
+      network: "AIRTEL",
+      providers: ["mockprimary", "mocksecondary"],
+      actor: "admin:pg",
+    });
+
+    // Delivery round-trip : insert → due → update delivered.
+    const { payment } = await eng.create({
+      amount_minor: 1000n,
+      currency: "CDF",
+      phone: "+243810000001",
+      country: "CD",
+      network: "AIRTEL",
+      idempotency_key: uid("del"),
+      correlation_id: uid("corr"),
+      request_id: uid("req"),
+    });
+    const delivery = await store.insertWebhookDelivery({
+      id: crypto.randomUUID(),
+      event_id: crypto.randomUUID(),
+      payment_id: payment.id,
+      url: "https://merchant.example/hook",
+      event_type: "payment.unknown",
+      payload: { event_id: "e", attempt_id: null },
+      signature: "sig",
+      next_retry_at: new Date().toISOString(),
+    });
+    expect(delivery.status).toBe("pending");
+    const dues = await store.listDueWebhookDeliveries(new Date().toISOString(), 10);
+    expect(dues.map((d) => d.id)).toContain(delivery.id);
+    const done = await store.updateWebhookDelivery(delivery.id, { status: "delivered", next_retry_at: null });
+    expect(done.status).toBe("delivered");
+    expect(done.next_retry_at).toBeNull();
   });
 });

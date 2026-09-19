@@ -99,6 +99,40 @@ export class UniqueViolationError extends Error {
   }
 }
 
+export type DeliveryStatus = "pending" | "delivered" | "failed" | "retrying";
+export type MerchantEventType = "payment.succeeded" | "payment.failed" | "payment.unknown";
+
+export interface WebhookDeliveryRow {
+  id: string;
+  event_id: string;
+  payment_id: string;
+  attempt_id: string | null;
+  url: string;
+  event_type: MerchantEventType;
+  payload: Record<string, unknown>;
+  signature: string;
+  status: DeliveryStatus;
+  attempts: number;
+  next_retry_at: string | null;
+  last_response_code: number | null;
+  last_response_body: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AuditLogRow {
+  id: string;
+  action: string;
+  actor: string;
+  resource_type: string;
+  resource_id: string | null;
+  old_value: unknown;
+  new_value: unknown;
+  ip: string | null;
+  request_id: string | null;
+  created_at: string;
+}
+
 export interface NewPayment {
   id: string;
   idempotency_key: string;
@@ -154,4 +188,37 @@ export interface PaymentStore {
   listDuePayments(now: string, limit: number): Promise<PaymentRow[]>;
   /** Paiements à expirer : non-finaux + expires_at dépassé. */
   listExpiredPayments(now: string, limit: number): Promise<PaymentRow[]>;
+  /** Remplace l'ordre de priorité pays+réseau (réordonnancement dashboard, US-15). */
+  replaceRoute(
+    countryId: string,
+    networkId: string,
+    entries: { provider_id: string; priority: number }[],
+  ): Promise<void>;
+  /** Audit append-only (webhook tardif §5.4, routing US-15, clés). */
+  insertAuditLog(a: {
+    id: string;
+    action: string;
+    actor: string;
+    resource_type: string;
+    resource_id?: string | null;
+    old_value?: unknown;
+    new_value?: unknown;
+    ip?: string | null;
+    request_id?: string | null;
+  }): Promise<AuditLogRow>;
+  /** Notifications marchandes sortantes (spec §8.2, US-10). */
+  insertWebhookDelivery(d: {
+    id: string;
+    event_id: string;
+    payment_id: string;
+    attempt_id?: string | null;
+    url: string;
+    event_type: MerchantEventType;
+    payload: Record<string, unknown>;
+    signature: string;
+    next_retry_at: string | null;
+  }): Promise<WebhookDeliveryRow>;
+  /** Livraisons dues : pending/retrying + next_retry_at dépassé (retry queue). */
+  listDueWebhookDeliveries(now: string, limit: number): Promise<WebhookDeliveryRow[]>;
+  updateWebhookDelivery(id: string, patch: Partial<WebhookDeliveryRow>): Promise<WebhookDeliveryRow>;
 }
