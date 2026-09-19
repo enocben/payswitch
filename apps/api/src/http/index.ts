@@ -9,7 +9,7 @@ import { MockProvider, type PaymentProvider, type ProviderCapabilities } from "@
 import { db, closeDb } from "../infrastructure/database/client.js";
 import { createApp } from "./server.js";
 
-const PORT = Number(process.env.PORT ?? "3000");
+const PORT = Number(process.env.PORT ?? "3456");
 const SCENARIO = (process.env.MOCK_SCENARIO ?? "success") as
   | "success" | "confirmed_failed" | "temporary_failure" | "timeout_unknown" | "pending";
 
