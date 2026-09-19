@@ -2,9 +2,27 @@
   "name": "dashboard",
   "private": true,
   "version": "0.1.0",
+  "type": "module",
   "scripts": {
-    "lint": "echo 'dashboard: no sources at this stage' && exit 0",
-    "test": "echo 'dashboard: no tests at this stage' && exit 0",
-    "test:e2e": "echo 'dashboard: no e2e at this stage' && exit 0"
+    "dev": "vite --port 5173",
+    "build": "vite build",
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test",
+    "test:e2e": "echo 'dashboard: e2e requires a live API (sibling feat/webhooks-rest) — not exercised in this wave' && exit 0"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^5.0.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.15",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.3"
   }
 }
