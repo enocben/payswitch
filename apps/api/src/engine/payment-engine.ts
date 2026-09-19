@@ -28,10 +28,23 @@ import {
 import { computeExpiresAt, computeNextPollAt, expirationHours } from "./polling.js";
 import { hashPhone, last4 } from "./phone.js";
 import {
+  buildPayload,
+  computeNextRetryAt,
+  deliveryHeaders,
+  finalEventType,
+  maxRetries,
+  parseRetrySchedule,
+  signPayload,
+  type WebhookSender,
+} from "./webhook-outbound.js";
+import {
   UniqueViolationError,
   type AttemptRow,
+  type AuditLogRow,
+  type MerchantEventType,
   type PaymentRow,
   type PaymentStore,
+  type WebhookDeliveryRow,
 } from "./store.js";
 
 /** Extension webhook/verify : résolution par référence et provider id. */
@@ -78,6 +91,31 @@ export interface WebhookOutcome {
     | "invalid_signature";
   payment_id?: string;
   payment_status?: PaymentStatus;
+}
+
+/** Contexte HTTP optionnel tracé dans l'AuditLog (spec §5.1). */
+export interface WebhookContext {
+  ip?: string;
+  requestId?: string;
+}
+
+export interface RoutingUpdateInput {
+  country: string;
+  network: string;
+  /** Codes providers dans l'ordre de priorité (position 1 = prio 1). */
+  providers: string[];
+  actor: string;
+  ip?: string;
+  requestId?: string;
+}
+
+export interface MerchantDeliveryInput {
+  paymentId: string;
+  url: string;
+  /** Secret whsec_... (affiché 1 fois à la création, résolu par la couche API). */
+  secret: string;
+  eventType?: MerchantEventType;
+  attemptId?: string;
 }
 
 const SENSITIVE_KEYS = new Set([
@@ -384,6 +422,7 @@ export class PaymentEngine {
     providerCode: string,
     rawBody: string,
     headers: Record<string, string>,
+    ctx?: WebhookContext,
   ): Promise<WebhookOutcome> {
     const { store } = this.opts;
     const adapter = this.opts.providers.get(providerCode);
@@ -426,7 +465,19 @@ export class PaymentEngine {
         return { httpStatus: 200 as const, result: "unlinked" as const };
       }
       if (final) {
-        // Final : journalisé (is_late si expired/unknown, spec §5.4), jamais muté.
+        // Final : journalisé (is_late si expired/unknown, spec §5.4) + AuditLog,
+        // jamais muté.
+        await tx.insertAuditLog({
+          id: this.uuid(),
+          action: late ? "webhook.late_received" : "webhook.already_final_ignored",
+          actor: `provider:${providerCode}`,
+          resource_type: "payment",
+          resource_id: locked.id,
+          old_value: { status: locked.status },
+          new_value: { provider_event_id: parsed.providerEventId, normalized_status: parsed.status },
+          ip: ctx?.ip ?? null,
+          request_id: ctx?.requestId ?? null,
+        });
         await tx.markWebhookProcessed(eventId, this.now().toISOString());
         return {
           httpStatus: 200 as const,
@@ -474,6 +525,175 @@ export class PaymentEngine {
         payment_status: fresh?.status,
       };
     });
+  }
+
+  // -------------------------------------------------------------- routing
+  /**
+   * Réordonne les priorités pays+réseau (dashboard, US-15) : remplace
+   * l'ordre en transaction + AuditLog avant/après. L'activation reste
+   * config-driven — ici on ne fait que réordonner (invariant §1).
+   */
+  async updateRouting(input: RoutingUpdateInput): Promise<string[]> {
+    const { store } = this.opts;
+    const countryCode = input.country.toUpperCase();
+    const networkCode = input.network.toUpperCase();
+    if (input.providers.length === 0) {
+      throw new CoreError("INVALID_ROUTE", "Routing requires at least one provider");
+    }
+    // Codes normalisés en minuscules (seeds Mock) ; doublons refusés (422).
+    const lower = input.providers.map((c) => c.toLowerCase());
+    if (new Set(lower).size !== lower.length) {
+      throw new CoreError("INVALID_ROUTE", "Duplicate provider in routing");
+    }
+    const country = await store.findCountry(countryCode);
+    if (!country) throw new CoreError("UNKNOWN_NETWORK", `Unknown country: ${countryCode}`);
+    const network = await store.findNetwork(country.id, networkCode);
+    if (!network) throw new CoreError("UNKNOWN_NETWORK", `Unknown network: ${countryCode}-${networkCode}`);
+    const providerIds: string[] = [];
+    for (const code of lower) {
+      const row = await store.findProviderByCode(code);
+      if (!row) throw new CoreError("PROVIDER_ERROR", `Provider not seeded: ${code}`);
+      providerIds.push(row.id);
+    }
+
+    return await store.withTransaction(async (tx) => {
+      const before = (await tx.findRoute(country.id, network.id)).map((e) => e.provider_code);
+      await tx.replaceRoute(
+        country.id,
+        network.id,
+        providerIds.map((provider_id, i) => ({ provider_id, priority: i + 1 })),
+      );
+      await tx.insertAuditLog({
+        id: this.uuid(),
+        action: "routing.updated",
+        actor: input.actor,
+        resource_type: "routing_rule",
+        resource_id: `${countryCode}-${networkCode}`,
+        old_value: { providers: before },
+        new_value: { providers: lower },
+        ip: input.ip ?? null,
+        request_id: input.requestId ?? null,
+      });
+      return lower;
+    });
+  }
+
+  // ---------------------------------------------------- webhooks sortants
+  /**
+   * Enqueue une notification marchand (US-10) : payload event_id + attempt_id,
+   * signature HMAC-SHA256 persistée, due immédiatement. Le type d'event est
+   * déduit de l'état final sauf override explicite. À appeler par la couche
+   * API quand le Payment atteint un état final (GET et webhook exposent le
+   * même état, US-02).
+   */
+  async enqueueMerchantDelivery(input: MerchantDeliveryInput): Promise<WebhookDeliveryRow> {
+    const { store } = this.opts;
+    const payment = await store.findPaymentById(input.paymentId);
+    if (!payment) throw new CoreError("PROVIDER_ERROR", `Payment not found: ${input.paymentId}`);
+    const eventType = input.eventType ?? finalEventType(payment.status);
+    if (!eventType) {
+      throw new CoreError("INVALID_TRANSITION", `No merchant event for non-final status ${payment.status}`);
+    }
+    const attempts = await store.listAttempts(input.paymentId);
+    const latest = attempts[attempts.length - 1] ?? null;
+    const eventId = this.uuid();
+    const payload = buildPayload({
+      eventId,
+      eventType,
+      paymentId: payment.id,
+      attemptId: input.attemptId ?? latest?.id ?? null,
+      status: payment.status,
+      amountMinor: payment.amount_minor.toString(),
+      currency: payment.currency,
+      externalReference: payment.external_reference,
+      occurredAt: this.now().toISOString(),
+    });
+    return await store.insertWebhookDelivery({
+      id: this.uuid(),
+      event_id: eventId,
+      payment_id: payment.id,
+      attempt_id: input.attemptId ?? latest?.id ?? null,
+      url: input.url,
+      event_type: eventType,
+      payload,
+      signature: signPayload(input.secret, payload),
+      next_retry_at: this.now().toISOString(),
+    });
+  }
+
+  /**
+   * Flush des livraisons dues via le sender injecté (spec §8.2) : 2xx →
+   * delivered ; sinon retrying avec backoff WEBHOOK_RETRY_SCHEDULE, puis
+   * failed après WEBHOOK_MAX_RETRIES. Erreurs isolées par livraison.
+   * Replay dashboard = ré-enqueue via enqueueMerchantDelivery.
+   */
+  async processDueDeliveries(
+    now: Date,
+    sender: WebhookSender,
+    opts?: { scheduleRaw?: string; maxRetriesRaw?: string; limit?: number },
+  ): Promise<{ checked: number; delivered: number; retrying: number; failed: number }> {
+    const schedule = parseRetrySchedule(opts?.scheduleRaw ?? process.env.WEBHOOK_RETRY_SCHEDULE);
+    const max = maxRetries(opts?.maxRetriesRaw ?? process.env.WEBHOOK_MAX_RETRIES);
+    const dues = await this.opts.store.listDueWebhookDeliveries(now.toISOString(), opts?.limit ?? 50);
+    let delivered = 0;
+    let retrying = 0;
+    let failed = 0;
+    for (const due of dues) {
+      try {
+        const res = await sender(
+          due.url,
+          JSON.stringify(due.payload),
+          deliveryHeaders(due.event_id, due.signature),
+        );
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          await this.opts.store.updateWebhookDelivery(due.id, {
+            status: "delivered",
+            attempts: due.attempts + 1,
+            next_retry_at: null,
+            last_response_code: res.statusCode,
+            last_response_body: res.body?.slice(0, 2000) ?? null,
+          });
+          delivered++;
+        } else {
+          if (due.attempts + 1 >= max) {
+            await this.opts.store.updateWebhookDelivery(due.id, {
+              status: "failed",
+              attempts: due.attempts + 1,
+              next_retry_at: null,
+              last_response_code: res.statusCode,
+              last_response_body: res.body?.slice(0, 2000) ?? null,
+            });
+            failed++;
+          } else {
+            await this.opts.store.updateWebhookDelivery(due.id, {
+              status: "retrying",
+              attempts: due.attempts + 1,
+              next_retry_at: computeNextRetryAt(now.getTime(), due.attempts + 1, schedule),
+              last_response_code: res.statusCode,
+              last_response_body: res.body?.slice(0, 2000) ?? null,
+            });
+            retrying++;
+          }
+        }
+      } catch {
+        if (due.attempts + 1 >= max) {
+          await this.opts.store.updateWebhookDelivery(due.id, {
+            status: "failed",
+            attempts: due.attempts + 1,
+            next_retry_at: null,
+          });
+          failed++;
+        } else {
+          await this.opts.store.updateWebhookDelivery(due.id, {
+            status: "retrying",
+            attempts: due.attempts + 1,
+            next_retry_at: computeNextRetryAt(now.getTime(), due.attempts + 1, schedule),
+          });
+          retrying++;
+        }
+      }
+    }
+    return { checked: dues.length, delivered, retrying, failed };
   }
 
   // -------------------------------------------------------------- polling

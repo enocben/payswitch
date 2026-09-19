@@ -11,6 +11,7 @@ export type CoreErrorCode =
   | "WEBHOOK_DUPLICATE"
   | "PAYMENT_FINAL"
   | "INVALID_AMOUNT"
+  | "INVALID_ROUTE"
   | "UNKNOWN_NETWORK";
 
 export class CoreError extends Error {
