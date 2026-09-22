@@ -26,12 +26,13 @@
     "@nestjs/cli": "^11.0.0",
     "@nestjs/testing": "^11.1.0",
     "@types/express": "^4.17.21",
-    "@types/node": "^22.15.0",
     "@types/jest": "^29.5.0",
+    "@types/node": "^22.15.0",
     "@types/supertest": "^6.0.2",
     "jest": "^29.7.0",
     "supertest": "^7.0.0",
     "ts-jest": "^29.2.0",
+    "ts-node": "^10.9.2",
     "typescript": "^5.8.0"
   },
   "scripts": {
@@ -43,7 +44,11 @@
     "build": "echo 'api: no build step (Bun runs TypeScript source directly)' && exit 0",
     "start": "bun src/main.ts",
     "keys": "bun scripts/create-api-key.ts",
-    "db:migrate": "bun scripts/migrate.ts",
+    "db:migrate": "typeorm-ts-node-commonjs migration:run -d src/infrastructure/database/typeorm-datasource.ts",
+    "db:migrate:show": "typeorm-ts-node-commonjs migration:show -d src/infrastructure/database/typeorm-datasource.ts",
+    "db:migrate:revert": "typeorm-ts-node-commonjs migration:revert -d src/infrastructure/database/typeorm-datasource.ts",
+    "migration:generate": "typeorm-ts-node-commonjs migration:generate -d src/infrastructure/database/typeorm-datasource.ts",
+    "migration:create": "npx typeorm migration:create",
     "db:seed": "bun scripts/seed.ts"
   }
 }

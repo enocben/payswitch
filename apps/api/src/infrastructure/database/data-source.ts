@@ -1,5 +1,6 @@
 // @payswitch/api — DataSource TypeORM (PostgreSQL, spec §14).
-// synchronize: false — le schéma est possédé par database/migrations/*.sql.
+// synchronize: false — le schéma est possédé par les migrations TypeORM
+// (apps/api/src/infrastructure/database/migrations/*.ts, table typeorm_migrations).
 // Ce module = client/config uniquement, jamais de SQL métier éparpillé.
 
 import { DataSource } from "typeorm";
@@ -12,6 +13,8 @@ export function buildDataSource(url?: string): DataSource {
     type: "postgres",
     url: databaseUrl,
     entities: ALL_ENTITIES,
+    migrations: [__dirname + "/migrations/*.{ts,js}"],
+    migrationsTableName: "typeorm_migrations",
     synchronize: false,
     logging: false,
     extra: { max: 10 },
