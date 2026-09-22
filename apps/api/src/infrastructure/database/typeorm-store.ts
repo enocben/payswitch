@@ -429,7 +429,7 @@ export class TypeOrmStore implements EngineStore {
     id: string;
     action: string;
     actor: string;
-    resource_type: string;
+    resource_type: string | null;
     resource_id?: string | null;
     old_value?: unknown;
     new_value?: unknown;
@@ -465,7 +465,8 @@ export class TypeOrmStore implements EngineStore {
   async insertWebhookDelivery(d: {
     id: string;
     event_id: string;
-    payment_id: string;
+    subscription_id?: string | null;
+    payment_id: string | null;
     attempt_id?: string | null;
     url: string;
     event_type: MerchantEventType;
@@ -477,7 +478,8 @@ export class TypeOrmStore implements EngineStore {
       const e = this.em.create(WebhookDeliveryEntity, {
         id: d.id,
         event_id: d.event_id,
-        payment_id: d.payment_id,
+        subscription_id: d.subscription_id ?? null,
+        payment_id: d.payment_id ?? null,
         attempt_id: d.attempt_id ?? null,
         url: d.url,
         event_type: d.event_type,
@@ -673,6 +675,7 @@ function mapDelivery(e: WebhookDeliveryEntity): WebhookDeliveryRow {
   return {
     id: e.id,
     event_id: e.event_id,
+    subscription_id: e.subscription_id,
     payment_id: e.payment_id,
     attempt_id: e.attempt_id,
     url: e.url,

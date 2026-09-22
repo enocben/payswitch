@@ -280,7 +280,8 @@ export class MemoryStore implements EngineStore {
   async insertWebhookDelivery(d: {
     id: string;
     event_id: string;
-    payment_id: string;
+    subscription_id?: string | null;
+    payment_id: string | null;
     attempt_id?: string | null;
     url: string;
     event_type: MerchantEventType;
@@ -294,6 +295,7 @@ export class MemoryStore implements EngineStore {
     const row: WebhookDeliveryRow = {
       id: d.id,
       event_id: d.event_id,
+      subscription_id: d.subscription_id ?? null,
       payment_id: d.payment_id,
       attempt_id: d.attempt_id ?? null,
       url: d.url,

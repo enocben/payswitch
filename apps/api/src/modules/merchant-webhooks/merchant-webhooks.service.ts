@@ -50,6 +50,7 @@ export class MerchantWebhooksService {
   async replay(id: string, secret: string) {
     const existing = await this.store.findDeliveryById(id);
     if (!existing) throw new NotFoundException(`Delivery not found: ${id}`);
+    if (!existing.payment_id) throw new NotFoundException(`Delivery has no payment: ${id}`);
     return this.engine.enqueueMerchantDelivery({
       paymentId: existing.payment_id,
       url: existing.url,

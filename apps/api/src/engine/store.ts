@@ -105,7 +105,8 @@ export type MerchantEventType = "payment.succeeded" | "payment.failed" | "paymen
 export interface WebhookDeliveryRow {
   id: string;
   event_id: string;
-  payment_id: string;
+  subscription_id: string | null;
+  payment_id: string | null;
   attempt_id: string | null;
   url: string;
   event_type: MerchantEventType;
@@ -124,7 +125,7 @@ export interface AuditLogRow {
   id: string;
   action: string;
   actor: string;
-  resource_type: string;
+  resource_type: string | null;
   resource_id: string | null;
   old_value: unknown;
   new_value: unknown;
@@ -199,7 +200,7 @@ export interface PaymentStore {
     id: string;
     action: string;
     actor: string;
-    resource_type: string;
+    resource_type: string | null;
     resource_id?: string | null;
     old_value?: unknown;
     new_value?: unknown;
@@ -210,7 +211,8 @@ export interface PaymentStore {
   insertWebhookDelivery(d: {
     id: string;
     event_id: string;
-    payment_id: string;
+    subscription_id?: string | null;
+    payment_id: string | null;
     attempt_id?: string | null;
     url: string;
     event_type: MerchantEventType;

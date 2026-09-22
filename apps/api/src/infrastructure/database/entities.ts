@@ -310,6 +310,30 @@ export class ApiKeyEntity {
   revoked_at!: Date | null;
 }
 
+@Entity("webhook_subscriptions")
+export class WebhookSubscriptionEntity {
+  @PrimaryColumn("uuid")
+  id!: string;
+
+  @Column({ type: "text" })
+  url!: string;
+
+  @Column({ type: "jsonb", default: () => "'[]'" })
+  events!: string[];
+
+  @Column({ type: "text" })
+  secret_hash!: string;
+
+  @Column({ type: "boolean", default: true })
+  is_active!: boolean;
+
+  @Column({ type: "timestamptz", default: () => "now()" })
+  created_at!: Date;
+
+  @Column({ type: "timestamptz", default: () => "now()" })
+  updated_at!: Date;
+}
+
 @Entity("webhook_deliveries")
 export class WebhookDeliveryEntity {
   @PrimaryColumn("uuid")
@@ -318,8 +342,11 @@ export class WebhookDeliveryEntity {
   @Column({ type: "uuid", unique: true })
   event_id!: string;
 
-  @Column("uuid")
-  payment_id!: string;
+  @Column({ type: "uuid", nullable: true })
+  subscription_id!: string | null;
+
+  @Column({ type: "uuid", nullable: true })
+  payment_id!: string | null;
 
   @Column({ type: "uuid", nullable: true })
   attempt_id!: string | null;
@@ -330,7 +357,7 @@ export class WebhookDeliveryEntity {
   @Column({ type: "text" })
   event_type!: string;
 
-  @Column({ type: "jsonb" })
+  @Column({ type: "jsonb", default: () => "'{}'" })
   payload!: Record<string, unknown>;
 
   @Column({ type: "text" })
@@ -358,6 +385,27 @@ export class WebhookDeliveryEntity {
   updated_at!: Date;
 }
 
+@Entity("dashboard_users")
+export class DashboardUserEntity {
+  @PrimaryColumn("uuid")
+  id!: string;
+
+  @Column({ type: "text", unique: true })
+  email!: string;
+
+  @Column({ type: "text" })
+  password_hash!: string;
+
+  @Column({ type: "text", nullable: true })
+  totp_secret!: string | null;
+
+  @Column({ type: "timestamptz", default: () => "now()" })
+  created_at!: Date;
+
+  @Column({ type: "timestamptz", default: () => "now()" })
+  updated_at!: Date;
+}
+
 @Entity("audit_logs")
 export class AuditLogEntity {
   @PrimaryColumn("uuid")
@@ -369,8 +417,8 @@ export class AuditLogEntity {
   @Column({ type: "text" })
   actor!: string;
 
-  @Column({ type: "text" })
-  resource_type!: string;
+  @Column({ type: "text", nullable: true })
+  resource_type!: string | null;
 
   @Column({ type: "text", nullable: true })
   resource_id!: string | null;
@@ -400,6 +448,8 @@ export const ALL_ENTITIES = [
   PaymentAttemptEntity,
   WebhookEventEntity,
   ApiKeyEntity,
+  WebhookSubscriptionEntity,
   WebhookDeliveryEntity,
+  DashboardUserEntity,
   AuditLogEntity,
 ];
