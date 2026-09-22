@@ -47,8 +47,8 @@
     "db:migrate": "typeorm-ts-node-commonjs migration:run -d src/infrastructure/database/typeorm-datasource.ts",
     "db:migrate:show": "typeorm-ts-node-commonjs migration:show -d src/infrastructure/database/typeorm-datasource.ts",
     "db:migrate:revert": "typeorm-ts-node-commonjs migration:revert -d src/infrastructure/database/typeorm-datasource.ts",
-    "migration:generate": "typeorm-ts-node-commonjs migration:generate -d src/infrastructure/database/typeorm-datasource.ts",
-    "migration:create": "npx typeorm migration:create",
+    "migration:generate": "node scripts/migration-generate.mjs",
+    "migration:create": "node scripts/migration-create.mjs",
     "db:seed": "bun scripts/seed.ts"
   }
 }
